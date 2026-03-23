@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Solar Bounce: Ultimate</title>
+
+<style>
+body { margin:0; overflow:hidden; background:#000; font-family:'Apple SD Gothic Neo',sans-serif; touch-action:none;}
+canvas { display:block;}
+
+#ui-overlay{
+position:absolute; top:0; left:0; width:100%; height:100%;
+display:flex; flex-direction:column; justify-content:center; align-items:center;
+background:rgba(0,0,0,0.9); color:white; z-index:10; text-align:center;
+}
+
+.menu-title{font-size:36px;font-weight:bold;margin-bottom:20px;text-shadow:0 0 20px #2b82c9;}
+
+.result-msg{font-size:18px;line-height:1.6;margin-bottom:30px;color:#ccc;padding:0 20px;}
+
+.btn{
+width:220px;padding:15px;margin:8px;border:2px solid white;
+background:transparent;color:white;font-size:18px;cursor:pointer;
+border-radius:30px;transition:0.3s;
+}
+
+.btn:active{background:white;color:black;}
+
+.btn-easy{border-color:#2ecc71;color:#2ecc71;}
+.btn-normal{border-color:#f1c40f;color:#f1c40f;}
+.btn-hard{border-color:#e74c3c;color:#e74c3c;}
+
+#game-info{
+position:absolute;top:20px;width:100%;
+display:flex;justify-content:space-around;align-items:center;
+color:white;pointer-events:none;z-index:5;
+}
+
+.timer{font-size:24px;font-weight:bold;color:#ff4757;width:100px;text-align:right;}
+.lives{font-size:24px;color:#ff4757;width:100px;text-align:left;}
+.level-name{font-size:18px;opacity:0.9;flex:1;text-align:center;}
+</style>
+</head>
+
+<body>
+
+<div id="ui-overlay">
+<div id="menu-content">
+
+<div class="menu-title">SOLAR BOUNCE</div>
+
+<div class="result-msg">
+60초 안에 목성까지 도달하세요!<br>
+가시에 닿거나 추락하면 1단계로 돌아갑니다.
+</div>
+
+<button class="btn btn-easy" onclick="startGame('easy')">쉬움 (Easy)</button>
+<button class="btn btn-normal" onclick="startGame('normal')">보통 (Normal)</button>
+<button class="btn btn-hard" onclick="startGame('hard')">어려움 (Hard)</button>
+
+</div>
+</div>
+
+<div id="game-info" style="display:none;">
+<div id="livesDisplay" class="lives">❤️❤️❤️</div>
+<div id="levelTitle" class="level-name">Level 1</div>
+<div id="timerDisplay" class="timer">60.00</div>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+
+const canvas=document.getElementById('gameCanvas');
+const ctx=canvas.getContext('2d');
+
+const uiOverlay=document.getElementById('ui-overlay');
+const menuContent=document.getElementById('menu-content');
+const gameInfo=document.getElementById('game-info');
+const timerDisplay=document.getElementById('timerDisplay');
+const livesDisplay=document.getElementById('livesDisplay');
+const levelTitle=document.getElementById('levelTitle');
+
+let gameState='MENU';
+let currentLevel=0;
+let timeLeft=60;
+let lives=3;
+let diffMultiplier=1;
+let lastTime=0;
+let difficultyMode="normal";
+
+const planets=[
+{ name:"수성 (Mercury)", color:"#8c8c8c", bg:"#1a1a1a", gravity:0.25 },
+{ name:"금성 (Venus)", color:"#e3bb76", bg:"#2d1f00", gravity:0.28 },
+{ name:"지구 (Earth)", color:"#2b82c9", bg:"#001a33", gravity:0.3 },
+{ name:"화성 (Mars)", color:"#e27b58", bg:"#260d05", gravity:0.26 },
+{ name:"목성 (Jupiter)", color:"#eb9605", bg:"#1f1400", gravity:0.35 }
+];
+
+const ball={x:0,y:0,radius:10,vx:0,vy:0,speed:4.5,jumpPower:-7};
+
+let platforms=[];
+let obstacles=[];
+
+let star={x:0,y:0,radius:12};
+
+let isMovingLeft=false;
+let isMovingRight=false;
+
+const levelData=[
+{ platforms:[[50,450,150],[250,400,100],[400,300,150]], obstacles:[], star:[470,260]},
+{ platforms:[[50,450,100],[200,450,50],[350,400,50],[500,350,100]], obstacles:[[210,450]], star:[550,310]},
+{ platforms:[[50,250,80],[180,350,80],[320,450,80],[480,350,80],[600,250,80]], obstacles:[[340,450]], star:[640,210]},
+{ platforms:[[50,450,100],[200,320,50],[350,320,50],[550,450,100]], obstacles:[[215,320],[365,320]], star:[600,410]},
+{ platforms:[[50,400,80],[200,450,40],[350,400,40],[500,350,40],[650,300,40],[500,200,100]], obstacles:[[360,400],[510,350]], star:[550,160]}
+];
+
+function startGame(difficulty){
+
+difficultyMode=difficulty;
+
+gameState='PLAYING';
+currentLevel=0;
+timeLeft=60;
+
+if(difficulty==="easy"){
+diffMultiplier=0.6;
+ball.speed=5.5;
+ball.jumpPower=-8.5;
+lives=5;
+}
+else if(difficulty==="normal"){
+diffMultiplier=1;
+ball.speed=4.5;
+ball.jumpPower=-7;
+lives=3;
+}
+else{
+diffMultiplier=1.3;
+ball.speed=3.5;
+ball.jumpPower=-6.5;
+lives=2;
+}
+
+uiOverlay.style.display='none';
+gameInfo.style.display='flex';
+
+updateLivesDisplay();
+initLevel(0);
+
+lastTime=performance.now();
+requestAnimationFrame(gameLoop);
+}
+
+function initLevel(index){
+
+if(index>=planets.length){
+endGame("축하합니다! 🎉<br>태양계를 정복했습니다!");
+return;
+}
+
+const data=levelData[index];
+
+platforms=data.platforms.map(p=>({x:p[0],y:p[1],w:p[2],h:15}));
+
+obstacles=data.obstacles.map(o=>({x:o[0],y:o[1],w:20,h:20}));
+
+// Easy mode: remove half obstacles
+if(difficultyMode==="easy"){
+obstacles=obstacles.slice(0,Math.ceil(obstacles.length/2));
+}
+
+star.x=data.star[0];
+star.y=data.star[1];
+
+ball.x=platforms[0].x+platforms[0].w/2;
+ball.y=platforms[0].y-50;
+
+ball.vx=0;
+ball.vy=0;
+
+levelTitle.innerText=`Level ${index+1}: ${planets[index].name}`;
+document.body.style.background=planets[index].bg;
+}
+
+function handleDeath(){
+
+lives--;
+updateLivesDisplay();
+
+if(lives<=0){
+endGame("실패... 🛸<br>모든 목숨을 잃었습니다.");
+}
+else{
+currentLevel=0;
+initLevel(0);
+}
+}
+
+function updateLivesDisplay(){
+livesDisplay.innerText="❤️".repeat(lives);
+}
+
+function endGame(msg){
+
+gameState='GAMEOVER';
+
+uiOverlay.style.display='flex';
+
+menuContent.innerHTML=`
+<div class="menu-title">MISSION RESULT</div>
+<div class="result-msg">${msg}</div>
+<button class="btn btn-normal" onclick="location.reload()">다시 시작하기</button>
+`;
+}
+
+window.addEventListener('touchstart',e=>{
+const touchX=e.touches[0].clientX;
+if(touchX<window.innerWidth/2) isMovingLeft=true;
+else isMovingRight=true;
+});
+
+window.addEventListener('touchend',()=>{
+isMovingLeft=false;
+isMovingRight=false;
+});
+
+window.addEventListener('keydown',e=>{
+if(e.key==="ArrowLeft") isMovingLeft=true;
+if(e.key==="ArrowRight") isMovingRight=true;
+});
+
+window.addEventListener('keyup',e=>{
+if(e.key==="ArrowLeft") isMovingLeft=false;
+if(e.key==="ArrowRight") isMovingRight=false;
+});
+
+function update(dt){
+
+if(gameState!=='PLAYING') return;
+
+timeLeft-=dt/1000;
+
+if(timeLeft<=0) endGame("TIME OVER");
+
+timerDisplay.innerText=Math.max(0,timeLeft).toFixed(2);
+
+const planet=planets[currentLevel];
+
+if(isMovingLeft) ball.vx=-ball.speed;
+else if(isMovingRight) ball.vx=ball.speed;
+else ball.vx*=0.9;
+
+ball.vy+=planet.gravity*diffMultiplier;
+
+ball.x+=ball.vx;
+ball.y+=ball.vy;
+
+platforms.forEach(p=>{
+if(ball.vy>0 &&
+ball.x+ball.radius>p.x &&
+ball.x-ball.radius<p.x+p.w &&
+ball.y+ball.radius>p.y &&
+ball.y+ball.radius<p.y+p.h+ball.vy){
+
+ball.y=p.y-ball.radius;
+ball.vy=ball.jumpPower;
+}
+});
+
+obstacles.forEach(o=>{
+if(ball.x+ball.radius>o.x &&
+ball.x-ball.radius<o.x+o.w &&
+ball.y+ball.radius>o.y-o.h &&
+ball.y-ball.radius<o.y){
+handleDeath();
+}
+});
+
+if(Math.hypot(ball.x-star.x,ball.y-star.y)<ball.radius+star.radius){
+currentLevel++;
+initLevel(currentLevel);
+}
+
+if(ball.y>canvas.height+100) handleDeath();
+}
+
+function draw(){
+
+ctx.clearRect(0,0,canvas.width,canvas.height);
+
+if(gameState==='MENU') return;
+
+const planet=planets[currentLevel];
+
+ctx.fillStyle="#ffff00";
+ctx.shadowBlur=15;
+ctx.shadowColor="#ffff00";
+
+ctx.beginPath();
+
+for(let i=0;i<5;i++){
+ctx.lineTo(star.x+Math.cos((18+i*72)/180*Math.PI)*star.radius,
+star.y-Math.sin((18+i*72)/180*Math.PI)*star.radius);
+
+ctx.lineTo(star.x+Math.cos((54+i*72)/180*Math.PI)*(star.radius/2),
+star.y-Math.sin((54+i*72)/180*Math.PI)*(star.radius/2));
+}
+
+ctx.closePath();
+ctx.fill();
+
+ctx.shadowBlur=0;
+
+ctx.fillStyle=planet.color;
+
+platforms.forEach(p=>{
+ctx.fillRect(p.x,p.y,p.w,p.h);
+});
+
+ctx.fillStyle="#ff4757";
+
+obstacles.forEach(o=>{
+ctx.beginPath();
+ctx.moveTo(o.x,o.y);
+ctx.lineTo(o.x+o.w/2,o.y-o.h);
+ctx.lineTo(o.x+o.w,o.y);
+ctx.fill();
+});
+
+ctx.fillStyle="white";
+ctx.shadowBlur=15;
+ctx.shadowColor="white";
+
+ctx.beginPath();
+ctx.arc(ball.x,ball.y,ball.radius,0,Math.PI*2);
+ctx.fill();
+}
+
+function gameLoop(timestamp){
+
+if(gameState!=='PLAYING') return;
+
+const dt=timestamp-lastTime;
+lastTime=timestamp;
+
+update(dt);
+draw();
+
+requestAnimationFrame(gameLoop);
+}
+
+function resize(){
+canvas.width=window.innerWidth;
+canvas.height=window.innerHeight;
+}
+
+window.addEventListener('resize',resize);
+resize();
+
+</script>
+
+</body>
+</html>
